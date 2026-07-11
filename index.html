@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#FFC800">
-<title>RideKhata - Vehicle Expense Tracker</title>
+<title>GarageBook - Vehicle Expense Tracker</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="RideKhata">
+<meta name="apple-mobile-web-app-title" content="GarageBook">
 <style>
   :root{
     --yellow:#FFC800;
@@ -242,7 +242,7 @@
   <!-- LOGIN SCREEN -->
   <div id="loginScreen">
     <div class="login-logo">🏍️</div>
-    <div class="login-title">RideKhata</div>
+    <div class="login-title">GarageBook</div>
     <div class="login-sub" id="loginSub">Enter PIN to continue</div>
     <div class="pin-dots" id="pinDots"></div>
     <div class="pin-pad" id="pinPad"></div>
@@ -254,7 +254,7 @@
 
     <div class="topbar">
       <div class="topbar-left">
-        <span class="topbar-logo">🏍️ RideKhata</span>
+        <span class="topbar-logo">🏍️ GarageBook</span>
       </div>
       <div class="live-dot" id="liveDot" title="Firebase status"></div>
     </div>
@@ -352,7 +352,7 @@
           <span class="arrow">›</span>
         </div>
         <div class="section-title">About</div>
-        <div style="color:#666; font-size:12px; text-align:center; padding:20px 0;">RideKhata v1.0<br>garage.sramesh.in</div>
+        <div style="color:#666; font-size:12px; text-align:center; padding:20px 0;">GarageBook v1.0<br>garage.sramesh.in</div>
       </div>
 
     </div>
@@ -1045,7 +1045,7 @@ function exportData(){
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'ridekhata_backup_' + todayStr() + '.json';
+  a.href = url; a.download = 'garagebook_backup_' + todayStr() + '.json';
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   showToast('Backup downloaded!');
