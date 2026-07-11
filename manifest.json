@@ -1,6 +1,6 @@
 {
-  "name": "RideKhata - Vehicle Expense Tracker",
-  "short_name": "RideKhata",
+  "name": "GarageBook - Vehicle Expense Tracker",
+  "short_name": "GarageBook",
   "description": "Track petrol, service, repair and all vehicle expenses",
   "start_url": "./index.html",
   "display": "standalone",
