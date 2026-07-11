@@ -483,7 +483,10 @@ function handlePinComplete(){
   } else if(pinMode==='confirmnew'){
     if(pinBuffer === pinTemp){
       STATE.pin = pinBuffer;
-      db.ref(ROOT+'/config/pin').set(STATE.pin);
+      db.ref(ROOT+'/config/pin').set(STATE.pin).catch(err=>{
+        showToast('PIN save failed: ' + err.message);
+        console.error('Firebase write error:', err);
+      });
       showToast('PIN updated!');
       backToNormalLogin();
     } else {
@@ -908,6 +911,9 @@ function renderEntryForm(existing){
     db.ref(ROOT+'/expenses/'+id).set(data).then(()=>{
       showToast(existing?'Entry updated!':'Entry saved!');
       closeModal();
+    }).catch(err=>{
+      showToast('Save failed: ' + err.message);
+      console.error('Firebase write error:', err);
     });
   });
 
@@ -917,6 +923,9 @@ function renderEntryForm(existing){
         db.ref(ROOT+'/expenses/'+existing.id).remove().then(()=>{
           showToast('Entry deleted');
           closeModal();
+        }).catch(err=>{
+          showToast('Delete failed: ' + err.message);
+          console.error('Firebase delete error:', err);
         });
       }
     });
@@ -957,6 +966,9 @@ function openAddVehicleModal(){
       showToast('Vehicle added!');
       STATE.activeVehicle = id;
       closeModal();
+    }).catch(err=>{
+      showToast('Save failed: ' + err.message);
+      console.error('Firebase write error:', err);
     });
   });
 }
@@ -990,6 +1002,9 @@ function bindDeleteButtons(){
           showToast('Deleted');
           if(kind==='vehicle' && STATE.activeVehicle===id) STATE.activeVehicle='all';
           closeModal();
+        }).catch(err=>{
+          showToast('Delete failed: ' + err.message);
+          console.error('Firebase delete error:', err);
         });
       }
     });
@@ -1029,6 +1044,9 @@ function openManageList(kind){
       showToast('Added!');
       closeModal();
       openManageList(kind);
+    }).catch(err=>{
+      showToast('Save failed: ' + err.message);
+      console.error('Firebase write error:', err);
     });
   });
 }
