@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ridekhata-v1';
+const CACHE_NAME = 'garagebook-v1';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
