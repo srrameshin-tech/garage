@@ -216,12 +216,26 @@
   .settings-row .arrow{color:#666; font-size:16px;}
 
   .manage-item{
-    display:flex; align-items:center; gap:12px; background:var(--darkgray); border-radius:12px; padding:12px 14px;
+    display:flex; align-items:center; gap:10px; background:var(--darkgray); border-radius:12px; padding:12px 14px;
     margin-bottom:8px; border:1px solid var(--midgray);
   }
-  .manage-item .emj{font-size:20px; width:30px; text-align:center;}
-  .manage-item .nm{flex:1; font-size:14px; font-weight:700;}
-  .manage-item .del-btn{color:var(--red); font-size:18px; padding:4px 8px; cursor:pointer;}
+  .manage-item.inactive{opacity:.45;}
+  .manage-item .emj{font-size:20px; width:28px; text-align:center; flex-shrink:0;}
+  .manage-item .nm{flex:1; font-size:14px; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .manage-item .edit-btn{color:var(--yellow); font-size:17px; padding:4px 6px; cursor:pointer; flex-shrink:0;}
+  .manage-item .del-btn{color:var(--red); font-size:17px; padding:4px 6px; cursor:pointer; flex-shrink:0;}
+  .toggle-switch{
+    position:relative; width:42px; height:24px; flex-shrink:0; cursor:pointer;
+  }
+  .toggle-switch input{opacity:0; width:0; height:0; position:absolute;}
+  .toggle-slider{
+    position:absolute; inset:0; background:#444; border-radius:24px; transition:.2s;
+  }
+  .toggle-slider:before{
+    content:""; position:absolute; width:18px; height:18px; left:3px; top:3px; background:#ccc; border-radius:50%; transition:.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider{background:var(--yellow);}
+  .toggle-switch input:checked + .toggle-slider:before{transform:translateX(18px); background:var(--black);}
 
   .toast{
     position:fixed; bottom:100px; left:50%; transform:translateX(-50%); background:var(--yellow); color:var(--black);
@@ -547,7 +561,7 @@ function initFirebase(){
 // ============ RENDER: VEHICLE CHIPS ============
 function renderVehicleChips(){
   const wrap = document.getElementById('vehicleScroll');
-  const vids = Object.keys(STATE.vehicles);
+  const vids = Object.keys(STATE.vehicles).filter(vid => STATE.vehicles[vid].active !== false);
   let html = `<div class="vchip ${STATE.activeVehicle==='all'?'active':''}" data-v="all">🌐 All</div>`;
   vids.forEach(vid=>{
     const v = STATE.vehicles[vid];
@@ -833,13 +847,16 @@ function openAddEntryModal(){ renderEntryForm(null); }
 function openEditEntryModal(id){ renderEntryForm(STATE.expenses[id] ? {id, ...STATE.expenses[id]} : null); }
 
 function renderEntryForm(existing){
-  const vehicleOptions = Object.entries(STATE.vehicles).map(([id,v])=>
-    `<option value="${id}">${escapeHtml(v.name)}</option>`).join('');
-  const defaultVid = existing?.vehicleId || (STATE.activeVehicle!=='all' ? STATE.activeVehicle : Object.keys(STATE.vehicles)[0]);
+  const vehicleEntries = Object.entries(STATE.vehicles).filter(([id,v]) => v.active !== false || id===existing?.vehicleId);
+  const vehicleOptions = vehicleEntries.map(([id,v])=>
+    `<option value="${id}">${escapeHtml(v.name)}${v.active===false?' (inactive)':''}</option>`).join('');
+  const defaultVid = existing?.vehicleId || (STATE.activeVehicle!=='all' ? STATE.activeVehicle : vehicleEntries[0]?.[0]);
 
-  const catChips = Object.entries(STATE.categories).map(([id,c])=>
+  const catEntries = Object.entries(STATE.categories).filter(([id,c]) => c.active !== false || id===existing?.categoryId);
+  const catChips = catEntries.map(([id,c])=>
     `<div class="pick-chip ${id===(existing?.categoryId)?'active':''}" data-cat="${id}">${c.emoji} ${escapeHtml(c.name)}</div>`).join('');
-  const pmChips = Object.entries(STATE.paymodes).map(([id,p])=>
+  const pmEntries = Object.entries(STATE.paymodes).filter(([id,p]) => p.active !== false || id===existing?.paymodeId);
+  const pmChips = pmEntries.map(([id,p])=>
     `<div class="pick-chip ${id===(existing?.paymodeId)?'active':''}" data-pm="${id}">${p.emoji} ${escapeHtml(p.name)}</div>`).join('');
 
   openModal(`
@@ -976,9 +993,12 @@ function openAddVehicleModal(){
 function openManageVehicles(){
   const rows = Object.entries(STATE.vehicles).map(([id,v])=>{
     const icon = v.type==='car'?'🚗':v.type==='bike'?'🏍️':'🚙';
-    return `<div class="manage-item">
+    const isActive = v.active !== false;
+    return `<div class="manage-item ${isActive?'':'inactive'}">
       <div class="emj">${icon}</div>
       <div class="nm">${escapeHtml(v.name)}${v.regNo?' · '+escapeHtml(v.regNo):''}</div>
+      <label class="toggle-switch"><input type="checkbox" class="toggle-active" data-id="${id}" data-kind="vehicle" ${isActive?'checked':''}><span class="toggle-slider"></span></label>
+      <div class="edit-btn" data-id="${id}" data-kind="vehicle">✏️</div>
       <div class="del-btn" data-id="${id}" data-kind="vehicle">🗑️</div>
     </div>`;
   }).join('');
@@ -990,6 +1010,76 @@ function openManageVehicles(){
   document.getElementById('closeModalX').addEventListener('click', closeModal);
   document.getElementById('addNewBtn').addEventListener('click', ()=>{ closeModal(); openAddVehicleModal(); });
   bindDeleteButtons();
+  bindToggleSwitches();
+  bindEditButtons();
+}
+
+function bindToggleSwitches(){
+  document.querySelectorAll('.toggle-active').forEach(sw=>{
+    sw.addEventListener('click', e=> e.stopPropagation());
+    sw.addEventListener('change', ()=>{
+      const id = sw.dataset.id, kind = sw.dataset.kind;
+      const path = kind==='vehicle' ? 'vehicles' : kind==='category' ? 'categories' : 'paymodes';
+      db.ref(ROOT+'/'+path+'/'+id).update({active: sw.checked}).then(()=>{
+        showToast(sw.checked ? 'Enabled' : 'Disabled');
+        sw.closest('.manage-item').classList.toggle('inactive', !sw.checked);
+      }).catch(err=>{
+        showToast('Update failed: ' + err.message);
+        console.error('Firebase update error:', err);
+        sw.checked = !sw.checked;
+      });
+    });
+  });
+}
+
+function bindEditButtons(){
+  document.querySelectorAll('.edit-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.id, kind = btn.dataset.kind;
+      if(kind==='vehicle') openEditVehicleModal(id);
+      else openEditListItemModal(kind, id);
+    });
+  });
+}
+
+function openEditVehicleModal(id){
+  const v = STATE.vehicles[id];
+  if(!v) return;
+  openModal(`
+    <div class="modal-title">Edit Vehicle<span class="close-x" id="closeModalX">✕</span></div>
+    <div class="field-label">Vehicle Name</div>
+    <input type="text" id="vName" value="${escapeHtml(v.name)}">
+    <div class="field-label">Type</div>
+    <div class="chip-grid" id="vTypeChips">
+      <div class="pick-chip ${v.type==='bike'?'active':''}" data-type="bike">🏍️ Bike</div>
+      <div class="pick-chip ${v.type==='car'?'active':''}" data-type="car">🚗 Car</div>
+      <div class="pick-chip ${v.type==='other'?'active':''}" data-type="other">🚙 Other</div>
+    </div>
+    <div class="field-label">Registration No. (optional)</div>
+    <input type="text" id="vReg" value="${escapeHtml(v.regNo||'')}">
+    <button class="btn-primary" id="saveVehicleBtn">Save Changes</button>
+  `);
+  let type = v.type || 'bike';
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.querySelectorAll('#vTypeChips .pick-chip').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      document.querySelectorAll('#vTypeChips .pick-chip').forEach(x=>x.classList.remove('active'));
+      c.classList.add('active'); type = c.dataset.type;
+    });
+  });
+  document.getElementById('saveVehicleBtn').addEventListener('click', ()=>{
+    const name = document.getElementById('vName').value.trim();
+    if(!name){ showToast('Enter vehicle name'); return; }
+    db.ref(ROOT+'/vehicles/'+id).update({
+      name, type, regNo: document.getElementById('vReg').value.trim() || ''
+    }).then(()=>{
+      showToast('Vehicle updated!');
+      closeModal();
+    }).catch(err=>{
+      showToast('Save failed: ' + err.message);
+      console.error('Firebase write error:', err);
+    });
+  });
 }
 
 function bindDeleteButtons(){
@@ -1016,12 +1106,16 @@ function openManageList(kind){
   const data = kind==='categories' ? STATE.categories : STATE.paymodes;
   const kindLabel = kind==='categories' ? 'Categories' : 'Payment Modes';
   const singularKind = kind==='categories' ? 'category' : 'paymode';
-  const rows = Object.entries(data).map(([id,item])=>`
-    <div class="manage-item">
+  const rows = Object.entries(data).map(([id,item])=>{
+    const isActive = item.active !== false;
+    return `
+    <div class="manage-item ${isActive?'':'inactive'}">
       <div class="emj">${item.emoji}</div>
       <div class="nm">${escapeHtml(item.name)}</div>
+      <label class="toggle-switch"><input type="checkbox" class="toggle-active" data-id="${id}" data-kind="${singularKind}" ${isActive?'checked':''}><span class="toggle-slider"></span></label>
+      <div class="edit-btn" data-id="${id}" data-kind="${kind}">✏️</div>
       <div class="del-btn" data-id="${id}" data-kind="${singularKind}">🗑️</div>
-    </div>`).join('');
+    </div>`;}).join('');
 
   openModal(`
     <div class="modal-title">${kindLabel}<span class="close-x" id="closeModalX">✕</span></div>
@@ -1035,6 +1129,8 @@ function openManageList(kind){
   `);
   document.getElementById('closeModalX').addEventListener('click', closeModal);
   bindDeleteButtons();
+  bindToggleSwitches();
+  bindEditButtons();
   document.getElementById('addNewItemBtn').addEventListener('click', ()=>{
     const emoji = document.getElementById('newEmoji').value.trim() || '📦';
     const name = document.getElementById('newName').value.trim();
@@ -1042,6 +1138,35 @@ function openManageList(kind){
     const id = uid(kind==='categories'?'cat':'pm');
     db.ref(ROOT+'/'+kind+'/'+id).set({emoji, name}).then(()=>{
       showToast('Added!');
+      closeModal();
+      openManageList(kind);
+    }).catch(err=>{
+      showToast('Save failed: ' + err.message);
+      console.error('Firebase write error:', err);
+    });
+  });
+}
+
+function openEditListItemModal(kind, id){
+  const data = kind==='categories' ? STATE.categories : STATE.paymodes;
+  const item = data[id];
+  if(!item) return;
+  const kindLabel = kind==='categories' ? 'Category' : 'Payment Mode';
+  openModal(`
+    <div class="modal-title">Edit ${kindLabel}<span class="close-x" id="closeModalX">✕</span></div>
+    <div class="field-label">Emoji</div>
+    <input type="text" id="editEmoji" value="${escapeHtml(item.emoji)}" maxlength="4" style="width:70px; text-align:center; font-size:20px;">
+    <div class="field-label">Name</div>
+    <input type="text" id="editName" value="${escapeHtml(item.name)}">
+    <button class="btn-primary" id="saveEditItemBtn">Save Changes</button>
+  `);
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.getElementById('saveEditItemBtn').addEventListener('click', ()=>{
+    const emoji = document.getElementById('editEmoji').value.trim() || '📦';
+    const name = document.getElementById('editName').value.trim();
+    if(!name){ showToast('Enter a name'); return; }
+    db.ref(ROOT+'/'+kind+'/'+id).update({emoji, name}).then(()=>{
+      showToast('Updated!');
       closeModal();
       openManageList(kind);
     }).catch(err=>{
