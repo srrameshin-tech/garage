@@ -283,6 +283,7 @@
           <div class="total-label">This Month · <span id="homeVehicleName">All Vehicles</span></div>
           <div class="total-amount" id="homeTotalMonth">₹0</div>
           <div class="total-meta" id="homeMonthMeta">No expenses yet</div>
+          <button class="btn-secondary" id="vehicleReportBtn" style="display:none; margin-top:12px; width:100%;">📄 Full Vehicle Report</button>
         </div>
 
         <div class="quick-stats">
@@ -617,6 +618,7 @@ function renderHome(){
   const vid = STATE.activeVehicle;
   const vName = vid==='all' ? 'All Vehicles' : (STATE.vehicles[vid]?.name || '-');
   document.getElementById('homeVehicleName').textContent = vName;
+  document.getElementById('vehicleReportBtn').style.display = (vid==='all') ? 'none' : 'block';
 
   const list = getFilteredExpenses(vid);
   const now = new Date();
@@ -826,6 +828,9 @@ document.getElementById('openCategoriesBtn').addEventListener('click', ()=>openM
 document.getElementById('openPaymodesBtn').addEventListener('click', ()=>openManageList('paymodes'));
 document.getElementById('openPinBtn').addEventListener('click', openChangePin);
 document.getElementById('exportBtn').addEventListener('click', exportData);
+document.getElementById('vehicleReportBtn').addEventListener('click', ()=>{
+  if(STATE.activeVehicle !== 'all') openVehicleReport(STATE.activeVehicle);
+});
 
 // ============ MODALS ============
 function openModal(innerHtml){
@@ -1192,6 +1197,95 @@ function exportData(){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   showToast('Backup downloaded!');
+}
+
+// ---- Vehicle Full Report ----
+function openVehicleReport(vehicleId){
+  const v = STATE.vehicles[vehicleId];
+  if(!v){ showToast('Vehicle not found'); return; }
+
+  const list = getFilteredExpenses(vehicleId); // already sorted newest first
+  const total = sumExpenses(list);
+
+  // category breakdown (all-time)
+  const catTotals = {};
+  list.forEach(e=>{ catTotals[e.categoryId] = (catTotals[e.categoryId]||0) + (Number(e.amount)||0); });
+  const sortedCats = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+
+  const icon = v.type==='car' ? '🚗' : v.type==='bike' ? '🏍️' : '🚙';
+
+  const catRowsHtml = sortedCats.length ? sortedCats.map(([cid,amt])=>{
+    const c = STATE.categories[cid] || {emoji:'📦', name:'Unknown'};
+    return `<div class="cat-bar-row"><div class="cat-bar-emoji">${c.emoji}</div>
+      <div style="flex:1;">${escapeHtml(c.name)}</div>
+      <div class="cat-bar-amt">${fmtMoney(amt)}</div></div>`;
+  }).join('') : `<div class="empty-state">No expenses yet</div>`;
+
+  const entriesHtml = list.length ? list.map(e=>{
+    const c = STATE.categories[e.categoryId] || {emoji:'📦', name:'Unknown'};
+    const pm = STATE.paymodes[e.paymodeId] || {name:''};
+    const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '';
+    return `<div class="entry-card">
+      <div class="entry-emoji">${c.emoji}</div>
+      <div class="entry-info">
+        <div class="entry-cat">${escapeHtml(c.name)}</div>
+        <div class="entry-sub">${dateStr} · ${escapeHtml(pm.name)}${e.odometer?' · '+e.odometer+' km':''}${e.notes?' · '+escapeHtml(e.notes):''}</div>
+      </div>
+      <div class="entry-amt">${fmtMoney(e.amount)}</div>
+    </div>`;
+  }).join('') : `<div class="empty-state">No entries yet</div>`;
+
+  const firstDate = list.length ? list[list.length-1].date : null;
+  const lastDate = list.length ? list[0].date : null;
+  const rangeStr = firstDate && lastDate ? `${firstDate} to ${lastDate}` : '-';
+
+  openModal(`
+    <div class="modal-title">${icon} ${escapeHtml(v.name)} - Full Report<span class="close-x" id="closeModalX">✕</span></div>
+
+    <div class="section-title" style="margin-top:0;">Vehicle Details</div>
+    <div class="cat-bar-row"><div style="flex:1;">Reg No</div><div class="cat-bar-amt">${escapeHtml(v.regNo||'-')}</div></div>
+    <div class="cat-bar-row"><div style="flex:1;">Type</div><div class="cat-bar-amt">${escapeHtml(v.type||'-')}</div></div>
+    <div class="cat-bar-row"><div style="flex:1;">Total Entries</div><div class="cat-bar-amt">${list.length}</div></div>
+    <div class="cat-bar-row"><div style="flex:1;">Date Range</div><div class="cat-bar-amt">${rangeStr}</div></div>
+
+    <div class="section-title">Total Spent (All Time)</div>
+    <div class="total-amount" style="font-size:32px;">${fmtMoney(total)}</div>
+
+    <div class="section-title">Category Breakdown</div>
+    ${catRowsHtml}
+
+    <div class="section-title">All Entries (${list.length})</div>
+    <div style="max-height:340px; overflow-y:auto;">${entriesHtml}</div>
+
+    <button class="btn-primary" id="shareReportBtn" style="margin-top:16px;">📤 Share Report (WhatsApp)</button>
+  `);
+
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.getElementById('shareReportBtn').addEventListener('click', ()=>{
+    let text = `*${v.name}* (${v.regNo||'-'})\n`;
+    text += `Type: ${v.type||'-'}\n`;
+    text += `Total spent (all time): ${fmtMoney(total)}\n`;
+    text += `Entries: ${list.length} · Range: ${rangeStr}\n\n`;
+    text += `*Category Breakdown*\n`;
+    sortedCats.forEach(([cid,amt])=>{
+      const c = STATE.categories[cid] || {emoji:'📦', name:'Unknown'};
+      text += `${c.emoji} ${c.name}: ${fmtMoney(amt)}\n`;
+    });
+    text += `\n*All Entries*\n`;
+    list.forEach(e=>{
+      const c = STATE.categories[e.categoryId] || {emoji:'📦', name:'Unknown'};
+      const pm = STATE.paymodes[e.paymodeId] || {name:''};
+      const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '';
+      text += `${dateStr} - ${c.emoji} ${c.name} - ${fmtMoney(e.amount)} (${pm.name})${e.odometer?' - '+e.odometer+'km':''}${e.notes?' - '+e.notes:''}\n`;
+    });
+    text += `\n_Garage · sramesh.in_`;
+
+    if(navigator.share){
+      navigator.share({title: v.name + ' Report', text}).catch(()=>{});
+    } else {
+      window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    }
+  });
 }
 
 // ============ INIT ============
