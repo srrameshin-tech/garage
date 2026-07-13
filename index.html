@@ -469,11 +469,18 @@ function pressPinKey(k){
   renderPinDots();
   if(pinBuffer.length===4) setTimeout(handlePinComplete, 150);
 }
+function digitFromKeyEvent(e){
+  if(e.code && /^Digit[0-9]$/.test(e.code)) return e.code.slice(5);
+  if(e.code && /^Numpad[0-9]$/.test(e.code)) return e.code.slice(6);
+  if(e.key >= '0' && e.key <= '9') return e.key;
+  return null;
+}
 document.addEventListener('keydown', (e)=>{
   const pad = document.getElementById('pinPad');
   if(!pad || !document.getElementById('loginScreen') || document.getElementById('loginScreen').classList.contains('hidden')) return;
-  if(e.key >= '0' && e.key <= '9'){ pressPinKey(e.key); }
-  else if(e.key === 'Backspace'){ pressPinKey('⌫'); }
+  const d = digitFromKeyEvent(e);
+  if(d !== null){ pressPinKey(d); }
+  else if(e.key === 'Backspace' || e.code === 'Backspace'){ pressPinKey('⌫'); }
 });
 function renderPinDots(){
   const dots = document.getElementById('pinDots');
