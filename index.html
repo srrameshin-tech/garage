@@ -460,15 +460,21 @@ function renderPinPad(){
     return `<button class="pin-key" data-key="${k}">${k}</button>`;
   }).join('');
   pad.querySelectorAll('.pin-key[data-key]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const k = btn.dataset.key;
-      if(k==='⌫'){ pinBuffer = pinBuffer.slice(0,-1); }
-      else if(pinBuffer.length<4){ pinBuffer += k; }
-      renderPinDots();
-      if(pinBuffer.length===4) setTimeout(handlePinComplete, 150);
-    });
+    btn.addEventListener('click', ()=> pressPinKey(btn.dataset.key));
   });
 }
+function pressPinKey(k){
+  if(k==='⌫'){ pinBuffer = pinBuffer.slice(0,-1); }
+  else if(pinBuffer.length<4){ pinBuffer += k; }
+  renderPinDots();
+  if(pinBuffer.length===4) setTimeout(handlePinComplete, 150);
+}
+document.addEventListener('keydown', (e)=>{
+  const pad = document.getElementById('pinPad');
+  if(!pad || !document.getElementById('loginScreen') || document.getElementById('loginScreen').classList.contains('hidden')) return;
+  if(e.key >= '0' && e.key <= '9'){ pressPinKey(e.key); }
+  else if(e.key === 'Backspace'){ pressPinKey('⌫'); }
+});
 function renderPinDots(){
   const dots = document.getElementById('pinDots');
   dots.innerHTML = '';
