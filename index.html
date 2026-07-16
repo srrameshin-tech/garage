@@ -921,7 +921,7 @@ function renderEntryForm(existing){
 
     <div class="field-label">Odometer - To Reading (optional)</div>
     <input type="number" id="fOdoTo" inputmode="numeric" placeholder="e.g. 12500 km" value="${existing?.odometer ?? existing?.odometerTo ?? ''}">
-    <div id="fOdoDistance" style="font-size:13px; color:#FFC800; margin-top:-8px; margin-bottom:12px; display:none;"></div>
+    <div id="fOdoDistance" style="font-size:13px; font-weight:600; color:#FFC800; margin-top:8px; margin-bottom:12px; display:none;"></div>
 
     <div class="field-label">Notes (optional)</div>
     <textarea id="fNotes" placeholder="Any details...">${existing?.notes||''}</textarea>
