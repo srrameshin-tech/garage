@@ -622,6 +622,20 @@ function odoLabel(e, sep){
   }
   return `${sep}${e.odometer}km`;
 }
+// Compute min/max odometer readings recorded for a vehicle's entry list -> total km driven
+function getOdometerStats(list){
+  let minOdo=null, maxOdo=null;
+  list.forEach(e=>{
+    [e.odometer, e.odometerFrom].forEach(val=>{
+      if(val!=null){
+        if(minOdo===null || val<minOdo) minOdo=val;
+        if(maxOdo===null || val>maxOdo) maxOdo=val;
+      }
+    });
+  });
+  const totalKm = (minOdo!=null && maxOdo!=null) ? (maxOdo-minOdo) : null;
+  return {minOdo, maxOdo, totalKm};
+}
 
 // ============ TABS ============
 function switchTab(tab){
@@ -1271,6 +1285,7 @@ function openVehicleReport(vehicleId){
 
   const list = getFilteredExpenses(vehicleId); // already sorted newest first
   const total = sumExpenses(list);
+  const odoStats = getOdometerStats(list);
 
   // category breakdown (all-time)
   const catTotals = {};
@@ -1312,6 +1327,8 @@ function openVehicleReport(vehicleId){
     <div class="cat-bar-row"><div style="flex:1;">Type</div><div class="cat-bar-amt">${escapeHtml(v.type||'-')}</div></div>
     <div class="cat-bar-row"><div style="flex:1;">Total Entries</div><div class="cat-bar-amt">${list.length}</div></div>
     <div class="cat-bar-row"><div style="flex:1;">Date Range</div><div class="cat-bar-amt">${rangeStr}</div></div>
+    ${odoStats.maxOdo!=null?`<div class="cat-bar-row"><div style="flex:1;">Current Odometer</div><div class="cat-bar-amt">${odoStats.maxOdo} km</div></div>`:''}
+    ${odoStats.totalKm!=null?`<div class="cat-bar-row"><div style="flex:1;">Total KM Driven (recorded)</div><div class="cat-bar-amt">${odoStats.totalKm} km</div></div>`:''}
 
     <div class="section-title">Total Spent (All Time)</div>
     <div class="total-amount" style="font-size:32px;">${fmtMoney(total)}</div>
@@ -1330,7 +1347,10 @@ function openVehicleReport(vehicleId){
     let text = `*${v.name}* (${v.regNo||'-'})\n`;
     text += `Type: ${v.type||'-'}\n`;
     text += `Total spent (all time): ${fmtMoney(total)}\n`;
-    text += `Entries: ${list.length} · Range: ${rangeStr}\n\n`;
+    text += `Entries: ${list.length} · Range: ${rangeStr}\n`;
+    if(odoStats.maxOdo!=null) text += `Current Odometer: ${odoStats.maxOdo} km\n`;
+    if(odoStats.totalKm!=null) text += `Total KM Driven (recorded): ${odoStats.totalKm} km\n`;
+    text += `\n`;
     text += `*Category Breakdown*\n`;
     sortedCats.forEach(([cid,amt])=>{
       const c = STATE.categories[cid] || {emoji:'📦', name:'Unknown'};
