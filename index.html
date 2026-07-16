@@ -297,6 +297,28 @@
             <div class="lbl">Top category</div>
           </div>
         </div>
+        <div class="quick-stats" id="homeKmStatsRow" style="display:none;">
+          <div class="stat-box">
+            <div class="num" id="homeMonthKm">0</div>
+            <div class="lbl">Total KM this month</div>
+          </div>
+          <div class="stat-box">
+            <div class="num" id="homeAvgKmDay">0</div>
+            <div class="lbl">Avg KM/day</div>
+          </div>
+        </div>
+        <div class="quick-stats" id="homePetrolStatsRow" style="display:none;">
+          <div class="stat-box">
+            <div class="num" id="homeMonthPetrol">₹0</div>
+            <div class="lbl">Petrol spend this month</div>
+          </div>
+        </div>
+
+        <div class="section-title" style="display:flex; align-items:center; justify-content:space-between;">
+          <span>Daily KM Log</span>
+          <button class="btn-secondary" id="addDailyLogBtn" style="width:auto; padding:6px 14px; font-size:13px;">+ Add Today</button>
+        </div>
+        <div id="homeDailyLogList"></div>
 
         <div class="section-title">Category Breakdown</div>
         <div id="homeCatBreakdown"></div>
@@ -563,6 +585,7 @@ function initFirebase(){
     STATE.categories = val.categories || DEFAULT_CATEGORIES;
     STATE.paymodes = val.paymodes || DEFAULT_PAYMODES;
     STATE.expenses = val.expenses || {};
+    STATE.dailyLogs = val.dailyLogs || {};
 
     if(!val.categories){ db.ref(ROOT+'/categories').set(DEFAULT_CATEGORIES); }
     if(!val.paymodes){ db.ref(ROOT+'/paymodes').set(DEFAULT_PAYMODES); }
@@ -685,11 +708,41 @@ function renderHome(){
   document.getElementById('homeMonthMeta').textContent = thisMonth.length ? monthLabel(now) : 'No expenses yet this month';
   document.getElementById('homeEntryCount').textContent = thisMonth.length;
 
+  // Total KM this month + average KM/day, from Daily KM Logs
+  const dailyLogsList = Object.entries(STATE.dailyLogs||{})
+    .map(([id,d])=>({id,...d}))
+    .filter(d => vid==='all' ? true : d.vehicleId===vid)
+    .filter(d => d.date && d.date.slice(0,7) === todayStr().slice(0,7));
+  const kmRow = document.getElementById('homeKmStatsRow');
+  if(dailyLogsList.length){
+    const monthKm = dailyLogsList.reduce((s,d)=> s + Math.max(0, (d.endKm||0) - (d.startKm||0)), 0);
+    const dayOfMonth = now.getDate(); // days elapsed so far this month, for a running average
+    const avgKm = dayOfMonth > 0 ? (monthKm / dayOfMonth) : 0;
+    kmRow.style.display = '';
+    document.getElementById('homeMonthKm').textContent = monthKm + ' km';
+    document.getElementById('homeAvgKmDay').textContent = avgKm.toFixed(1) + ' km';
+  } else {
+    kmRow.style.display = 'none';
+  }
+  renderDailyLogList();
+
   // category breakdown
   const catTotals = {};
   thisMonth.forEach(e=>{ catTotals[e.categoryId] = (catTotals[e.categoryId]||0) + (Number(e.amount)||0); });
   const sortedCats = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
   document.getElementById('homeTopCat').textContent = sortedCats.length ? (STATE.categories[sortedCats[0][0]]?.name || '-') : '-';
+
+  // Petrol spend this month
+  const petrolRow = document.getElementById('homePetrolStatsRow');
+  const petrolCatEntry = Object.entries(STATE.categories).find(([cid,c]) => (c.name||'').toLowerCase()==='petrol');
+  const petrolTotal = petrolCatEntry ? (catTotals[petrolCatEntry[0]] || 0) : 0;
+  if(petrolCatEntry && petrolTotal > 0){
+    petrolRow.style.display = '';
+    document.getElementById('homeMonthPetrol').textContent = fmtMoney(petrolTotal);
+  } else {
+    petrolRow.style.display = 'none';
+  }
+
 
   const maxCat = sortedCats.length ? sortedCats[0][1] : 1;
   const catWrap = document.getElementById('homeCatBreakdown');
@@ -887,6 +940,7 @@ document.getElementById('exportBtn').addEventListener('click', exportData);
 document.getElementById('vehicleReportBtn').addEventListener('click', ()=>{
   if(STATE.activeVehicle !== 'all') openVehicleReport(STATE.activeVehicle);
 });
+document.getElementById('addDailyLogBtn').addEventListener('click', openAddDailyLogModal);
 
 // ============ MODALS ============
 function openModal(innerHtml){
@@ -906,6 +960,139 @@ function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 // ---- Add/Edit Entry ----
 function openAddEntryModal(){ renderEntryForm(null); }
 function openEditEntryModal(id){ renderEntryForm(STATE.expenses[id] ? {id, ...STATE.expenses[id]} : null); }
+
+// ---- Daily KM Log ----
+function openAddDailyLogModal(){ renderDailyLogForm(null); }
+function openEditDailyLogModal(id){ renderDailyLogForm(STATE.dailyLogs[id] ? {id, ...STATE.dailyLogs[id]} : null); }
+
+function getLastEndKm(vehicleId, excludeId){
+  const logs = Object.entries(STATE.dailyLogs||{})
+    .map(([id,d])=>({id,...d}))
+    .filter(d => d.vehicleId===vehicleId && d.id!==excludeId && d.endKm!=null)
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||0)-(a.createdAt||0));
+  if(logs.length) return logs[0].endKm;
+  return getLastOdometer(vehicleId, null); // fallback to last expense entry's odometer reading
+}
+
+function renderDailyLogForm(existing){
+  const vehicleEntries = Object.entries(STATE.vehicles).filter(([id,v]) => v.active !== false || id===existing?.vehicleId);
+  const vehicleOptions = vehicleEntries.map(([id,v])=>
+    `<option value="${id}">${escapeHtml(v.name)}${v.active===false?' (inactive)':''}</option>`).join('');
+  const defaultVid = existing?.vehicleId || (STATE.activeVehicle!=='all' ? STATE.activeVehicle : vehicleEntries[0]?.[0]);
+
+  openModal(`
+    <div class="modal-title">${existing?'Edit Daily KM Log':'Add Daily KM Log'}<span class="close-x" id="closeModalX">✕</span></div>
+
+    <div class="field-label">Vehicle</div>
+    <select id="dlVehicle">${vehicleOptions}</select>
+
+    <div class="field-label">Date</div>
+    <input type="date" id="dlDate" value="${existing?.date || todayStr()}">
+
+    <div class="field-label">Start KM (Morning Reading)</div>
+    <input type="number" id="dlStart" inputmode="numeric" placeholder="e.g. 12000" value="${existing?.startKm ?? ''}">
+
+    <div class="field-label">End KM (Night Reading)</div>
+    <input type="number" id="dlEnd" inputmode="numeric" placeholder="e.g. 12045" value="${existing?.endKm ?? ''}">
+    <div id="dlDistance" style="font-size:13px; font-weight:600; color:#FFC800; margin-top:8px; margin-bottom:12px; display:none;"></div>
+
+    <button class="btn-primary" id="saveDailyLogBtn">${existing?'Update Log':'Save Log'}</button>
+    ${existing?'<button class="btn-secondary btn-danger" id="deleteDailyLogBtn">Delete Log</button>':''}
+  `);
+
+  if(defaultVid) document.getElementById('dlVehicle').value = defaultVid;
+
+  const startEl = document.getElementById('dlStart');
+  const endEl = document.getElementById('dlEnd');
+  const distEl = document.getElementById('dlDistance');
+  let startTouched = !!existing;
+
+  function updateDist(){
+    const s = startEl.value ? Number(startEl.value) : null;
+    const e = endEl.value ? Number(endEl.value) : null;
+    if(s!=null && e!=null && e>=s){
+      distEl.style.display = 'block';
+      distEl.textContent = `Distance today: ${e-s} km`;
+    } else {
+      distEl.style.display = 'none';
+      distEl.textContent = '';
+    }
+  }
+  function refreshStartDefault(){
+    if(startTouched) return;
+    const vid = document.getElementById('dlVehicle').value;
+    const last = getLastEndKm(vid, existing?.id);
+    if(last!=null) startEl.value = last;
+    updateDist();
+  }
+  startEl.addEventListener('input', ()=>{ startTouched = true; updateDist(); });
+  endEl.addEventListener('input', updateDist);
+  document.getElementById('dlVehicle').addEventListener('change', refreshStartDefault);
+  if(!existing) refreshStartDefault(); else updateDist();
+
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+
+  document.getElementById('saveDailyLogBtn').addEventListener('click', ()=>{
+    const vehicleId = document.getElementById('dlVehicle').value;
+    const date = document.getElementById('dlDate').value;
+    const startKm = startEl.value ? Number(startEl.value) : null;
+    const endKm = endEl.value ? Number(endEl.value) : null;
+    if(!vehicleId){ alert('Vehicle தேர்வு செய்யுங்க'); return; }
+    if(!date){ alert('Date போடுங்க'); return; }
+    if(startKm==null || endKm==null){ alert('Start & End KM இரண்டையும் போடுங்க'); return; }
+    if(endKm < startKm){ alert('End KM, Start KM-ஐ விட அதிகமா இருக்கணும்'); return; }
+
+    const dup = Object.entries(STATE.dailyLogs||{}).find(([id,d])=> id!==existing?.id && d.vehicleId===vehicleId && d.date===date);
+    if(dup && !confirm('இந்த தேதிக்கு ஏற்கனவே ஒரு log இருக்கு. இன்னொண்ணு சேர்க்கவா?')) return;
+
+    const id = existing?.id || uid('dlog');
+    const data = { vehicleId, date, startKm, endKm, createdAt: existing?.createdAt || Date.now() };
+    db.ref(ROOT+'/dailyLogs/'+id).set(data).then(()=>{
+      closeModal();
+      renderAll();
+    });
+  });
+
+  if(existing){
+    document.getElementById('deleteDailyLogBtn').addEventListener('click', ()=>{
+      if(!confirm('இந்த log-ஐ delete பண்ணலாமா?')) return;
+      db.ref(ROOT+'/dailyLogs/'+existing.id).remove().then(()=>{
+        closeModal();
+        renderAll();
+      });
+    });
+  }
+}
+
+function renderDailyLogList(){
+  const wrap = document.getElementById('homeDailyLogList');
+  if(!wrap) return;
+  const vid = STATE.activeVehicle;
+  const logs = Object.entries(STATE.dailyLogs||{})
+    .map(([id,d])=>({id,...d}))
+    .filter(d => vid==='all' ? true : d.vehicleId===vid)
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||0)-(a.createdAt||0))
+    .slice(0,10);
+  if(!logs.length){
+    wrap.innerHTML = `<div class="empty-state"><div class="ic">🛣️</div>No daily logs yet</div>`;
+    return;
+  }
+  wrap.innerHTML = logs.map(d=>{
+    const v = STATE.vehicles[d.vehicleId] || {name:'-'};
+    const dist = (d.endKm!=null && d.startKm!=null) ? (d.endKm-d.startKm) : null;
+    const dateStr = d.date ? new Date(d.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
+    return `<div class="entry-card" data-dlogid="${d.id}">
+      <div class="entry-emoji">🛣️</div>
+      <div class="entry-info">
+        <div class="entry-cat">${vid==='all' ? escapeHtml(v.name)+' · '+dateStr : dateStr}</div>
+        <div class="entry-sub">${d.startKm}→${d.endKm}km${dist!=null?' ('+dist+'km)':''}</div>
+      </div>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-dlogid]').forEach(el=>{
+    el.addEventListener('click', ()=> openEditDailyLogModal(el.dataset.dlogid));
+  });
+}
 
 function renderEntryForm(existing){
   const vehicleEntries = Object.entries(STATE.vehicles).filter(([id,v]) => v.active !== false || id===existing?.vehicleId);
