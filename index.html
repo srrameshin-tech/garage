@@ -1327,6 +1327,7 @@ function openVehicleReport(vehicleId){
     <div class="cat-bar-row"><div style="flex:1;">Type</div><div class="cat-bar-amt">${escapeHtml(v.type||'-')}</div></div>
     <div class="cat-bar-row"><div style="flex:1;">Total Entries</div><div class="cat-bar-amt">${list.length}</div></div>
     <div class="cat-bar-row"><div style="flex:1;">Date Range</div><div class="cat-bar-amt">${rangeStr}</div></div>
+    ${odoStats.minOdo!=null?`<div class="cat-bar-row"><div style="flex:1;">Starting Odometer</div><div class="cat-bar-amt">${odoStats.minOdo} km</div></div>`:''}
     ${odoStats.maxOdo!=null?`<div class="cat-bar-row"><div style="flex:1;">Current Odometer</div><div class="cat-bar-amt">${odoStats.maxOdo} km</div></div>`:''}
     ${odoStats.totalKm!=null?`<div class="cat-bar-row"><div style="flex:1;">Total KM Driven (recorded)</div><div class="cat-bar-amt">${odoStats.totalKm} km</div></div>`:''}
 
@@ -1348,6 +1349,7 @@ function openVehicleReport(vehicleId){
     text += `Type: ${v.type||'-'}\n`;
     text += `Total spent (all time): ${fmtMoney(total)}\n`;
     text += `Entries: ${list.length} · Range: ${rangeStr}\n`;
+    if(odoStats.minOdo!=null) text += `Starting Odometer: ${odoStats.minOdo} km\n`;
     if(odoStats.maxOdo!=null) text += `Current Odometer: ${odoStats.maxOdo} km\n`;
     if(odoStats.totalKm!=null) text += `Total KM Driven (recorded): ${odoStats.totalKm} km\n`;
     text += `\n`;
