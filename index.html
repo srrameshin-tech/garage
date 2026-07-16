@@ -50,6 +50,7 @@
   .pin-key{
     width:72px; height:72px; border-radius:50%; border:none; background:var(--black); color:var(--yellow);
     font-size:24px; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer;
+    touch-action:manipulation; -webkit-user-select:none; user-select:none;
   }
   .pin-key:active{transform:scale(0.94); background:var(--darkgray);}
   .pin-key.empty{background:transparent;}
@@ -459,8 +460,18 @@ function renderPinPad(){
     if(k==='') return '<div class="pin-key empty"></div>';
     return `<button class="pin-key" data-key="${k}">${k}</button>`;
   }).join('');
+  let keyTouched = false;
   pad.querySelectorAll('.pin-key[data-key]').forEach(btn=>{
-    btn.addEventListener('click', ()=> pressPinKey(btn.dataset.key));
+    btn.addEventListener('touchend', (e)=>{
+      keyTouched = true;
+      e.preventDefault();
+      pressPinKey(btn.dataset.key);
+      setTimeout(()=>{ keyTouched = false; }, 400);
+    });
+    btn.addEventListener('click', ()=>{
+      if(keyTouched) return; // already handled via touchend
+      pressPinKey(btn.dataset.key);
+    });
   });
 }
 function pressPinKey(k){
