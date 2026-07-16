@@ -605,6 +605,24 @@ function expensesInMonth(list, d){
 }
 function sumExpenses(list){ return list.reduce((s,e)=> s + (Number(e.amount)||0), 0); }
 
+// Find the most recent odometer reading for a vehicle (used as default "From Reading")
+function getLastOdometer(vehicleId, excludeId){
+  const list = Object.entries(STATE.expenses)
+    .map(([id,e])=>({id,...e}))
+    .filter(e => e.vehicleId===vehicleId && e.id!==excludeId && e.odometer!=null)
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||'') || (b.createdAt||0)-(a.createdAt||0));
+  return list.length ? list[0].odometer : null;
+}
+// Build a display label for odometer readings, showing distance covered when available
+function odoLabel(e, sep){
+  sep = sep || ' · ';
+  if(e.odometer==null) return '';
+  if(e.odometerFrom!=null && e.odometer>=e.odometerFrom){
+    return `${sep}${e.odometerFrom}\u2192${e.odometer}km (${e.odometer-e.odometerFrom}km run)`;
+  }
+  return `${sep}${e.odometer}km`;
+}
+
 // ============ TABS ============
 function switchTab(tab){
   STATE.activeTab = tab;
@@ -680,7 +698,7 @@ function entryCardHtml(e){
   const pm = STATE.paymodes[e.paymodeId] || {name:''};
   const v = STATE.vehicles[e.vehicleId] || {name:''};
   const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
-  const sub = STATE.activeVehicle==='all' ? `${v.name} · ${pm.name} · ${dateStr}` : `${pm.name} · ${dateStr}`;
+  const sub = (STATE.activeVehicle==='all' ? `${v.name} · ${pm.name} · ${dateStr}` : `${pm.name} · ${dateStr}`) + odoLabel(e);
   return `<div class="entry-card" data-id="${e.id}">
     <div class="entry-emoji">${c.emoji}</div>
     <div class="entry-info">
@@ -898,8 +916,12 @@ function renderEntryForm(existing){
     <div class="field-label">Date</div>
     <input type="date" id="fDate" value="${existing?.date || todayStr()}">
 
-    <div class="field-label">Odometer Reading (optional)</div>
-    <input type="number" id="fOdo" inputmode="numeric" placeholder="e.g. 12500 km" value="${existing?.odometer||''}">
+    <div class="field-label">Odometer - From Reading (optional)</div>
+    <input type="number" id="fOdoFrom" inputmode="numeric" placeholder="e.g. 12000 km" value="${existing?.odometerFrom ?? ''}">
+
+    <div class="field-label">Odometer - To Reading (optional)</div>
+    <input type="number" id="fOdoTo" inputmode="numeric" placeholder="e.g. 12500 km" value="${existing?.odometer ?? existing?.odometerTo ?? ''}">
+    <div id="fOdoDistance" style="font-size:13px; color:#FFC800; margin-top:-8px; margin-bottom:12px; display:none;"></div>
 
     <div class="field-label">Notes (optional)</div>
     <textarea id="fNotes" placeholder="Any details...">${existing?.notes||''}</textarea>
@@ -913,6 +935,35 @@ function renderEntryForm(existing){
   let selectedPm = existing?.paymodeId || null;
 
   document.getElementById('closeModalX').addEventListener('click', closeModal);
+
+  // ---- Odometer From/To auto-fill + live distance ----
+  const fOdoFromEl = document.getElementById('fOdoFrom');
+  const fOdoToEl = document.getElementById('fOdoTo');
+  const fOdoDistEl = document.getElementById('fOdoDistance');
+  let odoFromTouched = !!existing;
+  function updateOdoDistance(){
+    const from = fOdoFromEl.value ? Number(fOdoFromEl.value) : null;
+    const to = fOdoToEl.value ? Number(fOdoToEl.value) : null;
+    if(from!=null && to!=null && to>=from){
+      fOdoDistEl.style.display = 'block';
+      fOdoDistEl.textContent = `Distance covered: ${to-from} km`;
+    } else {
+      fOdoDistEl.style.display = 'none';
+      fOdoDistEl.textContent = '';
+    }
+  }
+  function refreshOdoFromDefault(){
+    if(odoFromTouched) return;
+    const vid = document.getElementById('fVehicle').value;
+    const last = getLastOdometer(vid, existing?.id);
+    if(last!=null) fOdoFromEl.value = last;
+    updateOdoDistance();
+  }
+  fOdoFromEl.addEventListener('input', ()=>{ odoFromTouched = true; updateOdoDistance(); });
+  fOdoToEl.addEventListener('input', updateOdoDistance);
+  document.getElementById('fVehicle').addEventListener('change', refreshOdoFromDefault);
+  if(!existing) refreshOdoFromDefault(); else updateOdoDistance();
+
   document.querySelectorAll('#fCatChips .pick-chip').forEach(c=>{
     c.addEventListener('click', ()=>{
       document.querySelectorAll('#fCatChips .pick-chip').forEach(x=>x.classList.remove('active'));
@@ -938,7 +989,8 @@ function renderEntryForm(existing){
 
     const data = {
       vehicleId, amount, categoryId:selectedCat, paymodeId:selectedPm, date,
-      odometer: document.getElementById('fOdo').value ? Number(document.getElementById('fOdo').value) : null,
+      odometer: document.getElementById('fOdoTo').value ? Number(document.getElementById('fOdoTo').value) : null,
+      odometerFrom: document.getElementById('fOdoFrom').value ? Number(document.getElementById('fOdoFrom').value) : null,
       notes: document.getElementById('fNotes').value.trim() || null,
       createdAt: existing?.createdAt || Date.now()
     };
@@ -1242,7 +1294,7 @@ function openVehicleReport(vehicleId){
       <div class="entry-emoji">${c.emoji}</div>
       <div class="entry-info">
         <div class="entry-cat">${escapeHtml(c.name)}</div>
-        <div class="entry-sub">${dateStr} · ${escapeHtml(pm.name)}${e.odometer?' · '+e.odometer+' km':''}${e.notes?' · '+escapeHtml(e.notes):''}</div>
+        <div class="entry-sub">${dateStr} · ${escapeHtml(pm.name)}${odoLabel(e)}${e.notes?' · '+escapeHtml(e.notes):''}</div>
       </div>
       <div class="entry-amt">${fmtMoney(e.amount)}</div>
     </div>`;
@@ -1289,7 +1341,7 @@ function openVehicleReport(vehicleId){
       const c = STATE.categories[e.categoryId] || {emoji:'📦', name:'Unknown'};
       const pm = STATE.paymodes[e.paymodeId] || {name:''};
       const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '';
-      text += `${dateStr} - ${c.emoji} ${c.name} - ${fmtMoney(e.amount)} (${pm.name})${e.odometer?' - '+e.odometer+'km':''}${e.notes?' - '+e.notes:''}\n`;
+      text += `${dateStr} - ${c.emoji} ${c.name} - ${fmtMoney(e.amount)} (${pm.name})${odoLabel(e,' - ')}${e.notes?' - '+e.notes:''}\n`;
     });
     text += `\n_Garage · sramesh.in_`;
 
