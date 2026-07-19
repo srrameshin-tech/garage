@@ -397,6 +397,10 @@
           <div class="settings-row-left"><span class="ic">📤</span><span class="txt">Export All Data (JSON)</span></div>
           <span class="arrow">›</span>
         </div>
+        <div class="settings-row" id="exportCsvBtn">
+          <div class="settings-row-left"><span class="ic">📊</span><span class="txt">Export All Expenses (Excel/CSV)</span></div>
+          <span class="arrow">›</span>
+        </div>
         <div class="section-title">About</div>
         <div style="color:#666; font-size:12px; text-align:center; padding:20px 0;">GarageBook v1.0<br>garage.sramesh.in</div>
       </div>
@@ -418,6 +422,7 @@
 
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 // ============ FIREBASE CONFIG ============
 const firebaseConfig = {
@@ -922,6 +927,25 @@ function getOdometerStats(list){
   const totalKm = (minOdo!=null && maxOdo!=null) ? (maxOdo-minOdo) : null;
   return {minOdo, maxOdo, totalKm};
 }
+// Compute km/l fuel efficiency between consecutive fill-ups (needs odometer + liters)
+function computeFuelEfficiency(list){
+  const fuelCat = Object.entries(STATE.categories).find(([cid,c]) => /petrol|fuel|diesel/i.test(c.name||''));
+  if(!fuelCat) return { entries: [], avgKmpl: null };
+  const fills = list
+    .filter(e => e.categoryId === fuelCat[0] && e.liters && (e.odometer!=null || e.odometerFrom!=null))
+    .map(e => ({ date: e.date, odo: e.odometer ?? e.odometerFrom, liters: e.liters }))
+    .sort((a,b)=> (a.date||'').localeCompare(b.date||''));
+  const results = [];
+  for(let i=1;i<fills.length;i++){
+    const prev = fills[i-1], curr = fills[i];
+    const distance = curr.odo - prev.odo;
+    if(distance > 0 && curr.liters > 0){
+      results.push({ date: curr.date, distance, liters: curr.liters, kmpl: (distance/curr.liters) });
+    }
+  }
+  const avgKmpl = results.length ? (results.reduce((s,r)=>s+r.kmpl,0)/results.length) : null;
+  return { entries: results.slice(-5).reverse(), avgKmpl };
+}
 
 // ============ TABS ============
 function switchTab(tab){
@@ -1194,6 +1218,7 @@ document.getElementById('openPaymodesBtn').addEventListener('click', ()=>openMan
 document.getElementById('openRecurringBtn').addEventListener('click', openManageRecurring);
 document.getElementById('openPinBtn').addEventListener('click', openChangePin);
 document.getElementById('exportBtn').addEventListener('click', exportData);
+document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
 document.getElementById('vehicleReportBtn').addEventListener('click', ()=>{
   if(STATE.activeVehicle !== 'all') openVehicleReport(STATE.activeVehicle);
 });
@@ -1392,6 +1417,10 @@ function renderEntryForm(existing){
     <input type="number" id="fOdoTo" inputmode="numeric" placeholder="e.g. 12500 km" value="${existing?.odometer ?? existing?.odometerTo ?? ''}">
     <div id="fOdoDistance" style="font-size:13px; font-weight:600; color:#FFC800; margin-top:8px; margin-bottom:12px; display:none;"></div>
 
+    <div class="field-label" id="fLitersLabel" style="display:none;">Liters (optional, for mileage calc)</div>
+    <input type="number" id="fLiters" inputmode="decimal" placeholder="e.g. 2.5" value="${existing?.liters ?? ''}" style="display:none;">
+    <div style="font-size:12px; color:#fff; margin-top:-6px; margin-bottom:12px; display:none;" id="fLitersHint">Odometer + Liters இரண்டும் போட்டா, mileage (km/l) auto-calculate ஆகும்</div>
+
     <div class="field-label">Notes (optional)</div>
     <textarea id="fNotes" placeholder="Any details...">${existing?.notes||''}</textarea>
 
@@ -1437,8 +1466,17 @@ function renderEntryForm(existing){
     c.addEventListener('click', ()=>{
       document.querySelectorAll('#fCatChips .pick-chip').forEach(x=>x.classList.remove('active'));
       c.classList.add('active'); selectedCat = c.dataset.cat;
+      toggleLitersField();
     });
   });
+  function toggleLitersField(){
+    const cname = STATE.categories[selectedCat]?.name || '';
+    const isFuel = /petrol|fuel|diesel/i.test(cname);
+    document.getElementById('fLitersLabel').style.display = isFuel ? 'block' : 'none';
+    document.getElementById('fLiters').style.display = isFuel ? 'block' : 'none';
+    document.getElementById('fLitersHint').style.display = isFuel ? 'block' : 'none';
+  }
+  toggleLitersField();
   document.querySelectorAll('#fPmChips .pick-chip').forEach(c=>{
     c.addEventListener('click', ()=>{
       document.querySelectorAll('#fPmChips .pick-chip').forEach(x=>x.classList.remove('active'));
@@ -1460,6 +1498,7 @@ function renderEntryForm(existing){
       vehicleId, amount, categoryId:selectedCat, paymodeId:selectedPm, date,
       odometer: document.getElementById('fOdoTo').value ? Number(document.getElementById('fOdoTo').value) : null,
       odometerFrom: document.getElementById('fOdoFrom').value ? Number(document.getElementById('fOdoFrom').value) : null,
+      liters: document.getElementById('fLiters').value ? Number(document.getElementById('fLiters').value) : null,
       notes: document.getElementById('fNotes').value.trim() || null,
       createdAt: existing?.createdAt || Date.now()
     };
@@ -1608,8 +1647,10 @@ function openEditVehicleModal(id){
     <input type="date" id="vRcExpiry" value="${v.rcExpiry||''}">
     <div class="field-label">Monthly Budget (optional, ₹)</div>
     <input type="number" id="vBudgetMonthly" inputmode="numeric" value="${v.budgetMonthly ?? ''}" placeholder="e.g. 3000">
+    <button class="btn-secondary" id="openDocsBtn" style="margin-top:14px;">📎 Insurance/RC/PUC Documents</button>
     <button class="btn-primary" id="saveVehicleBtn">Save Changes</button>
   `);
+  document.getElementById('openDocsBtn').addEventListener('click', ()=> openVehicleDocuments(id));
   let type = v.type || 'bike';
   document.getElementById('closeModalX').addEventListener('click', closeModal);
   document.querySelectorAll('#vTypeChips .pick-chip').forEach(c=>{
@@ -1635,6 +1676,81 @@ function openEditVehicleModal(id){
     }).catch(err=>{
       showToast('Save failed: ' + err.message);
       console.error('Firebase write error:', err);
+    });
+  });
+}
+
+// ============ DOCUMENT VAULT (Insurance/RC/PUC photos) ============
+function compressImageFile(file, maxWidth){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = e=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        if(w > maxWidth){ h = Math.round(h * (maxWidth / w)); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+function openVehicleDocuments(vehicleId){
+  const v = STATE.vehicles[vehicleId];
+  if(!v) return;
+  const docTypes = [
+    {key:'docInsurance', label:'Insurance', icon:'📄'},
+    {key:'docRC', label:'RC', icon:'🪪'},
+    {key:'docPUC', label:'PUC', icon:'🌫️'}
+  ];
+  const rows = docTypes.map(dt=>{
+    const has = !!v[dt.key];
+    return `<div style="background:#161616; border-radius:12px; padding:12px; margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:${has?'8px':'0'};">
+        <span style="font-weight:700; color:#fff;">${dt.icon} ${dt.label}</span>
+        <label style="background:var(--yellow); color:#0A0A0A; padding:6px 12px; border-radius:8px; font-weight:700; font-size:12.5px; cursor:pointer;">
+          ${has?'Replace':'Upload'}
+          <input type="file" accept="image/*" capture="environment" class="docFileInput" data-key="${dt.key}" style="display:none;">
+        </label>
+      </div>
+      ${has ? `<img src="${v[dt.key]}" style="width:100%; border-radius:8px; margin-top:6px;">
+      <div style="text-align:right; margin-top:6px;"><span class="docDeleteBtn" data-key="${dt.key}" style="color:#FF4D4D; font-size:12px; font-weight:700; cursor:pointer;">🗑️ Remove</span></div>` : `<div style="color:#fff; font-size:12px; opacity:.6;">Photo இல்ல இன்னும்</div>`}
+    </div>`;
+  }).join('');
+  openModal(`
+    <div class="modal-title">${escapeHtml(v.name)} — Documents<span class="close-x" id="closeModalX">✕</span></div>
+    <div style="color:#fff; font-size:12.5px; margin-bottom:14px;">Photo எடுத்து upload பண்ணுங்க. Automatic-a compress ஆகி store ஆகும்.</div>
+    ${rows}
+  `);
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.querySelectorAll('.docFileInput').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const file = inp.files[0];
+      if(!file) return;
+      showToast('Upload ஆகுது...');
+      try{
+        const dataUrl = await compressImageFile(file, 1000);
+        await db.ref(ROOT+'/vehicles/'+vehicleId+'/'+inp.dataset.key).set(dataUrl);
+        showToast('Saved!');
+        openVehicleDocuments(vehicleId); // refresh
+      }catch(err){
+        showToast('Upload failed: ' + err.message);
+      }
+    });
+  });
+  document.querySelectorAll('.docDeleteBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(confirm('Remove this document?')){
+        db.ref(ROOT+'/vehicles/'+vehicleId+'/'+btn.dataset.key).remove().then(()=>{
+          showToast('Removed'); openVehicleDocuments(vehicleId);
+        });
+      }
     });
   });
 }
@@ -1750,8 +1866,75 @@ function exportData(){
   URL.revokeObjectURL(url);
   showToast('Backup downloaded!');
 }
+function exportCSV(){
+  const rows = [['Date','Vehicle','Category','Amount','Payment Mode','Notes']];
+  Object.values(STATE.expenses||{})
+    .sort((a,b)=> (a.date||'').localeCompare(b.date||''))
+    .forEach(e=>{
+      const vname = STATE.vehicles[e.vehicleId]?.name || 'Unknown';
+      const cname = STATE.categories[e.categoryId]?.name || 'Unknown';
+      const pname = STATE.paymodes[e.paymodeId]?.name || '-';
+      const notes = (e.notes||'').replace(/"/g,'""');
+      rows.push([e.date||'', vname, cname, e.amount||0, pname, notes]);
+    });
+  const csv = rows.map(r=> r.map(c=> `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'garagebook_expenses_' + todayStr() + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  showToast('CSV downloaded!');
+}
 
 // ---- Vehicle Full Report ----
+// ---- PDF Generation ----
+function generateVehiclePdf(v, total, odoStats, fuelEff, sortedCats, list, rangeStr, icon){
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    let y = 20;
+    doc.setFontSize(18); doc.setTextColor(255,200,0);
+    doc.text('Garage Book - Vehicle Report', 14, y); y += 10;
+    doc.setFontSize(14); doc.setTextColor(0,0,0);
+    doc.text(v.name + ' (' + (v.regNo||'-') + ')', 14, y); y += 8;
+    doc.setFontSize(10); doc.setTextColor(80,80,80);
+    doc.text('Type: ' + (v.type||'-') + '   Entries: ' + list.length + '   Range: ' + rangeStr, 14, y); y += 10;
+
+    doc.setFontSize(12); doc.setTextColor(0,0,0);
+    doc.text('Total Spent (All Time): ' + fmtMoney(total), 14, y); y += 8;
+    if(odoStats.totalKm!=null){
+      doc.text('Total KM Driven (recorded): ' + odoStats.totalKm + ' km', 14, y); y += 8;
+    }
+    if(fuelEff.avgKmpl){
+      doc.text('Average Mileage: ' + fuelEff.avgKmpl.toFixed(1) + ' km/l', 14, y); y += 8;
+    }
+    y += 4;
+    doc.setFontSize(13); doc.text('Category Breakdown', 14, y); y += 7;
+    doc.setFontSize(10);
+    sortedCats.forEach(([cid,amt])=>{
+      const c = STATE.categories[cid] || {name:'Unknown'};
+      doc.text(c.name + ': ' + fmtMoney(amt), 18, y); y += 6;
+      if(y > 270){ doc.addPage(); y = 20; }
+    });
+    y += 6;
+    doc.setFontSize(13); doc.text('All Entries', 14, y); y += 7;
+    doc.setFontSize(9);
+    list.forEach(e=>{
+      const c = STATE.categories[e.categoryId] || {name:'Unknown'};
+      const pm = STATE.paymodes[e.paymodeId] || {name:''};
+      const line = (e.date||'') + ' - ' + c.name + ' - ' + fmtMoney(e.amount) + ' - ' + pm.name;
+      doc.text(line, 18, y); y += 5.5;
+      if(y > 280){ doc.addPage(); y = 20; }
+    });
+    doc.save('garagebook_' + v.name.replace(/\s+/g,'_') + '_' + todayStr() + '.pdf');
+    showToast('PDF downloaded!');
+  }catch(err){
+    showToast('PDF generation failed: ' + err.message);
+    console.error(err);
+  }
+}
+
 function openVehicleReport(vehicleId){
   const v = STATE.vehicles[vehicleId];
   if(!v){ showToast('Vehicle not found'); return; }
@@ -1759,6 +1942,7 @@ function openVehicleReport(vehicleId){
   const list = getFilteredExpenses(vehicleId); // already sorted newest first
   const total = sumExpenses(list);
   const odoStats = getOdometerStats(list);
+  const fuelEff = computeFuelEfficiency(list);
 
   // category breakdown (all-time)
   const catTotals = {};
@@ -1807,16 +1991,26 @@ function openVehicleReport(vehicleId){
     <div class="section-title">Total Spent (All Time)</div>
     <div class="total-amount" style="font-size:32px;">${fmtMoney(total)}</div>
 
+    ${fuelEff.avgKmpl ? `
+    <div class="section-title">Fuel Efficiency (Mileage)</div>
+    <div class="cat-bar-row"><div style="flex:1;">Average Mileage</div><div class="cat-bar-amt">${fuelEff.avgKmpl.toFixed(1)} km/l</div></div>
+    ${fuelEff.entries.map(f=> `<div class="cat-bar-row"><div style="flex:1;">${f.date}</div><div class="cat-bar-amt">${f.kmpl.toFixed(1)} km/l (${f.distance}km / ${f.liters}L)</div></div>`).join('')}
+    ` : ''}
+
     <div class="section-title">Category Breakdown</div>
     ${catRowsHtml}
 
     <div class="section-title">All Entries (${list.length})</div>
     <div style="max-height:340px; overflow-y:auto;">${entriesHtml}</div>
 
-    <button class="btn-primary" id="shareReportBtn" style="margin-top:16px;">📤 Share Report (WhatsApp)</button>
+    <button class="btn-primary" id="downloadPdfBtn" style="margin-top:16px;">⬇️ Download PDF</button>
+    <button class="btn-primary" id="shareReportBtn" style="margin-top:10px;">📤 Share Report (WhatsApp)</button>
   `);
 
   document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.getElementById('downloadPdfBtn').addEventListener('click', ()=>{
+    generateVehiclePdf(v, total, odoStats, fuelEff, sortedCats, list, rangeStr, icon);
+  });
   document.getElementById('shareReportBtn').addEventListener('click', ()=>{
     let text = `*${v.name}* (${v.regNo||'-'})\n`;
     text += `Type: ${v.type||'-'}\n`;
