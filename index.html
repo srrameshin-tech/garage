@@ -284,6 +284,9 @@
         <div id="docExpiryBanner" style="display:none; border-radius:14px; padding:14px 16px; margin-bottom:14px; font-weight:400; font-size:13.5px; line-height:1.5;"></div>
         <div id="recurringBanner" style="display:none; border-radius:14px; padding:14px 16px; margin-bottom:14px; font-weight:400; font-size:13.5px; line-height:1.5;"></div>
         <div id="budgetBanner" style="display:none; border-radius:14px; padding:14px 16px; margin-bottom:14px; font-weight:400; font-size:13.5px; line-height:1.5;"></div>
+        <div id="reminderActionsRow" style="display:none; margin-bottom:14px;">
+          <span onclick="shareRemindersWhatsApp()" style="background:#25D366; color:#0A0A0A; padding:9px 16px; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer; display:inline-block;">📱 Reminders WhatsApp-ல Share பண்ணுங்க</span>
+        </div>
         <div class="total-card">
           <div class="total-label">This Month · <span id="homeVehicleName">All Vehicles</span></div>
           <div class="total-amount" id="homeTotalMonth">₹0</div>
@@ -386,6 +389,14 @@
         </div>
         <div class="settings-row" id="openRecurringBtn">
           <div class="settings-row-left"><span class="ic">🔁</span><span class="txt">Recurring Expenses</span></div>
+          <span class="arrow">›</span>
+        </div>
+        <div class="settings-row" id="notifToggleBtn">
+          <div class="settings-row-left"><span class="ic">🔔</span><span class="txt" id="notifToggleTxt">Enable Reminder Notifications</span></div>
+          <span class="arrow">›</span>
+        </div>
+        <div class="settings-row" id="openYearlyWrapBtn">
+          <div class="settings-row-left"><span class="ic">🎉</span><span class="txt">Yearly Wrap-up</span></div>
           <span class="arrow">›</span>
         </div>
         <div class="settings-row" id="openPinBtn">
@@ -884,6 +895,140 @@ function renderBudgetBanner(vid){
   banner.style.display = 'block';
 }
 
+// ============ UNIFIED REMINDERS — WHATSAPP SHARE + NOTIFICATIONS ============
+function getAllDueReminderLines(vid){
+  const lines = [];
+  const vids = vid==='all' ? Object.keys(STATE.vehicles) : [vid];
+  vids.forEach(id=>{
+    const s = computeServiceDue(id);
+    if(s) lines.push(`🔧 ${s.vehicleName}: Service ${s.overdue?'due ஆயிடுச்சு':'விரைவில் due'}`);
+    computeDocExpiry(id).forEach(d=> lines.push(`${d.icon} ${d.vehicleName}: ${d.label} ${d.overdue?'expire ஆயிடுச்சு':'விரைவில் expire'}`));
+    const b = computeBudgetStatus(id);
+    if(b) lines.push(`💰 ${b.vehicleName}: Budget ${Math.round(b.percent)}% ${b.overBudget?'exceed ஆயிடுச்சு':'கிட்ட வந்துடுச்சு'}`);
+  });
+  computeRecurringDue(vid).forEach(r=>{
+    const vname = STATE.vehicles[r.vehicleId]?.name || '-';
+    lines.push(`🔁 ${vname}: ${r.label} — ${fmtMoney(r.amount)} due`);
+  });
+  return lines;
+}
+function renderReminderActions(vid){
+  const row = document.getElementById('reminderActionsRow');
+  if(!row) return;
+  const lines = getAllDueReminderLines(vid);
+  if(!lines.length){ row.style.display='none'; return; }
+  row.style.display = 'flex';
+  row.dataset.text = 'Garage Book Reminders:\n\n' + lines.join('\n');
+  maybeNotify(lines);
+}
+function shareRemindersWhatsApp(){
+  const row = document.getElementById('reminderActionsRow');
+  const text = row?.dataset.text || '';
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+}
+function maybeNotify(lines){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  const today = todayStr();
+  if(localStorage.getItem('gb_notified_' + today)) return; // once per day
+  localStorage.setItem('gb_notified_' + today, '1');
+  try{
+    if(navigator.serviceWorker && navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(reg=>{
+        reg.showNotification('Garage Book', {
+          body: lines.slice(0,3).join(' • ') + (lines.length>3 ? ` +${lines.length-3} more` : ''),
+          icon: 'icon-192.png', badge: 'icon-192.png'
+        });
+      });
+    } else {
+      new Notification('Garage Book', { body: lines[0], icon: 'icon-192.png' });
+    }
+  }catch(e){ /* ignore */ }
+}
+function requestNotificationPermission(){
+  if(!('Notification' in window)){ showToast('Idhu browser-la notifications support pannala'); return; }
+  Notification.requestPermission().then(perm=>{
+    if(perm==='granted'){ showToast('Notifications ON ஆச்சு!'); }
+    else { showToast('Permission கொடுக்கல'); }
+    updateNotifToggleUI();
+  });
+}
+function updateNotifToggleUI(){
+  const el = document.getElementById('notifToggleTxt');
+  if(!el) return;
+  const granted = ('Notification' in window) && Notification.permission==='granted';
+  el.textContent = granted ? 'Notifications: ON ✅' : 'Enable Reminder Notifications';
+}
+
+// ============ YEARLY WRAP-UP ============
+function openYearlyWrapModal(){
+  const years = new Set();
+  Object.values(STATE.expenses).forEach(e=>{ if(e.date) years.add(e.date.slice(0,4)); });
+  const yearList = Array.from(years).sort().reverse();
+  const currentYear = String(new Date().getFullYear());
+  if(!yearList.includes(currentYear)) yearList.unshift(currentYear);
+  renderYearlyWrap(yearList[0], yearList);
+}
+function renderYearlyWrap(year, yearList){
+  const allExpenses = Object.values(STATE.expenses).filter(e => (e.date||'').startsWith(year));
+  const total = sumExpenses(allExpenses);
+  const catTotals = {};
+  allExpenses.forEach(e=>{
+    const cname = STATE.categories[e.categoryId]?.name || 'Other';
+    catTotals[cname] = (catTotals[cname]||0) + (Number(e.amount)||0);
+  });
+  const topCat = Object.entries(catTotals).sort((a,b)=>b[1]-a[1])[0];
+  const entryCount = allExpenses.length;
+  const vehicleCount = new Set(allExpenses.map(e=>e.vehicleId)).size;
+  let totalKm = 0;
+  Object.values(STATE.dailyLogs||{}).forEach(log=>{
+    if((log.date||'').startsWith(year) && log.startKm!=null && log.endKm!=null){
+      totalKm += (log.endKm - log.startKm);
+    }
+  });
+  const payModeTotals = {};
+  allExpenses.forEach(e=>{
+    const pname = STATE.paymodes[e.paymodeId]?.name || 'Cash';
+    payModeTotals[pname] = (payModeTotals[pname]||0) + (Number(e.amount)||0);
+  });
+  const topPayMode = Object.entries(payModeTotals).sort((a,b)=>b[1]-a[1])[0];
+
+  const yearOptions = yearList.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('');
+  const shareText = `🎉 My ${year} Garage Book Wrap-up:\n\n💰 Total Spend: ${fmtMoney(total)}\n📝 Entries: ${entryCount}\n${topCat ? `🏆 Top Category: ${topCat[0]} (${fmtMoney(topCat[1])})\n` : ''}${totalKm>0 ? `🛣️ Total KM Driven: ${totalKm.toLocaleString('en-IN')} km\n` : ''}`;
+
+  openModal(`
+    <div class="modal-title">🎉 Yearly Wrap-up<span class="close-x" id="closeModalX">✕</span></div>
+    <select id="wrapYearSelect" style="margin-bottom:16px;">${yearOptions}</select>
+    <div style="background:linear-gradient(135deg,#1A1400,#0A0A0A); border:1px solid #FFC800; border-radius:16px; padding:22px; text-align:center;">
+      <div style="color:#FFC800; font-weight:700; font-size:18px; margin-bottom:4px;">${year} Wrap-up</div>
+      <div style="color:#fff; font-size:12px; margin-bottom:18px;">Garage Book</div>
+      <div style="color:#fff; font-size:12px; opacity:.7;">TOTAL SPEND</div>
+      <div style="color:var(--yellow); font-size:34px; font-weight:900; margin-bottom:14px;">${fmtMoney(total)}</div>
+      <div style="display:flex; gap:10px; margin-bottom:14px;">
+        <div style="flex:1; background:#161616; border-radius:10px; padding:12px;">
+          <div style="color:#fff; font-size:20px; font-weight:700;">${entryCount}</div>
+          <div style="color:#fff; font-size:11px; opacity:.7;">Entries</div>
+        </div>
+        <div style="flex:1; background:#161616; border-radius:10px; padding:12px;">
+          <div style="color:#fff; font-size:20px; font-weight:700;">${vehicleCount}</div>
+          <div style="color:#fff; font-size:11px; opacity:.7;">Vehicles</div>
+        </div>
+        <div style="flex:1; background:#161616; border-radius:10px; padding:12px;">
+          <div style="color:#fff; font-size:20px; font-weight:700;">${totalKm>0 ? totalKm.toLocaleString('en-IN') : '-'}</div>
+          <div style="color:#fff; font-size:11px; opacity:.7;">KM Driven</div>
+        </div>
+      </div>
+      ${topCat ? `<div style="text-align:left; color:#fff; font-size:13px; margin-bottom:6px;">🏆 Top Category: <b style="color:var(--yellow);">${escapeHtml(topCat[0])}</b> (${fmtMoney(topCat[1])})</div>` : ''}
+      ${topPayMode ? `<div style="text-align:left; color:#fff; font-size:13px;">💳 Most Used: <b style="color:var(--yellow);">${escapeHtml(topPayMode[0])}</b></div>` : ''}
+    </div>
+    <button class="btn-primary" id="shareWrapBtn" style="margin-top:16px;">📱 WhatsApp-ல Share பண்ணுங்க</button>
+  `);
+  document.getElementById('closeModalX').addEventListener('click', closeModal);
+  document.getElementById('wrapYearSelect').addEventListener('change', e=> renderYearlyWrap(e.target.value, yearList));
+  document.getElementById('shareWrapBtn').addEventListener('click', ()=>{
+    window.open('https://wa.me/?text=' + encodeURIComponent(shareText), '_blank');
+  });
+}
+
 function getFilteredExpenses(vehicleId){
   return Object.entries(STATE.expenses)
     .map(([id,e])=>({id,...e}))
@@ -975,6 +1120,7 @@ function renderHome(){
   renderDocExpiryBanner(vid);
   renderRecurringBanner(vid);
   renderBudgetBanner(vid);
+  renderReminderActions(vid);
   const vName = vid==='all' ? 'All Vehicles' : (STATE.vehicles[vid]?.name || '-');
   document.getElementById('homeVehicleName').textContent = vName;
   document.getElementById('vehicleReportBtn').style.display = (vid==='all') ? 'none' : 'block';
@@ -1216,6 +1362,9 @@ document.getElementById('openVehiclesBtn').addEventListener('click', openManageV
 document.getElementById('openCategoriesBtn').addEventListener('click', ()=>openManageList('categories'));
 document.getElementById('openPaymodesBtn').addEventListener('click', ()=>openManageList('paymodes'));
 document.getElementById('openRecurringBtn').addEventListener('click', openManageRecurring);
+document.getElementById('notifToggleBtn').addEventListener('click', requestNotificationPermission);
+document.getElementById('openYearlyWrapBtn').addEventListener('click', openYearlyWrapModal);
+updateNotifToggleUI();
 document.getElementById('openPinBtn').addEventListener('click', openChangePin);
 document.getElementById('exportBtn').addEventListener('click', exportData);
 document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
